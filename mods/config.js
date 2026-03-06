@@ -56,21 +56,19 @@ const defaultConfig = {
   enableSigninReminder: false
 };
 
-let localConfig;
-
+let savedConfig = {};
 try {
-  localConfig = JSON.parse(window.localStorage[CONFIG_KEY]);
+  const raw = window.localStorage[CONFIG_KEY];
+  if (raw) savedConfig = JSON.parse(raw);
 } catch (err) {
   console.warn('Config read failed:', err);
-  localConfig = defaultConfig;
 }
 
-export function configRead(key) {
-  if (localConfig[key] === undefined) {
-    console.warn('Populating key', key, 'with default value', defaultConfig[key]);
-    localConfig[key] = defaultConfig[key];
-  }
+// Merge saved config over defaults so new keys are automatically populated
+// without losing user-set values.
+const localConfig = Object.assign({}, defaultConfig, savedConfig);
 
+export function configRead(key) {
   return localConfig[key];
 }
 
@@ -81,23 +79,5 @@ export function configWrite(key, value) {
   configChangeEmitter.dispatchEvent(new CustomEvent('configChange', { detail: { key, value } }));
 }
 
-export const configChangeEmitter = {
-  listeners: {},
-  addEventListener(type, callback) {
-    if (!this.listeners[type]) this.listeners[type] = [];
-    this.listeners[type].push(callback);
-  },
-  removeEventListener(type, callback) {
-    if (!this.listeners[type]) return;
-    this.listeners[type] = this.listeners[type].filter(cb => cb !== callback);
-  },
-  dispatchEvent(event) {
-    const type = event.type;
-    if (!this.listeners[type]) return;
-    this.listeners[type].forEach(cb => {
-      try {
-        cb.call(this, event)
-      } catch (_) {};
-    });
-  }
-};
+// Use the native EventTarget API instead of a hand-rolled emitter.
+export const configChangeEmitter = new EventTarget();

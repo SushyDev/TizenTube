@@ -5,30 +5,30 @@ import { timelyAction, longPressData, MenuServiceItemRenderer, ShelfRenderer, Ti
 import { PatchSettings } from '../ui/customYTSettings.js';
 
 /**
- * This is a minimal reimplementation of the following uBlock Origin rule:
+ * Central JSON.parse intercept.
+ *
+ * YouTube TV processes all server responses through JSON.parse, so patching it
+ * is the standard approach for modifying response data without touching the
+ * app's bundled code.
+ *
+ * Ad-blocking technique adapted from the following uBlock Origin rule:
  * https://github.com/uBlockOrigin/uAssets/blob/3497eebd440f4871830b9b45af0afc406c6eb593/filters/filters.txt#L116
- *
- * This in turn calls the following snippet:
- * https://github.com/gorhill/uBlock/blob/bfdc81e9e400f7b78b2abc97576c3d7bf3a11a0b/assets/resources/scriptlets.js#L365-L470
- *
- * Seems like for now dropping just the adPlacements is enough for YouTube TV
  */
 const origParse = JSON.parse;
 JSON.parse = function () {
   const r = origParse.apply(this, arguments);
+
+  // ── Ad blocking ──────────────────────────────────────────────────────────
   const adBlockEnabled = configRead('enableAdBlock');
-  const signinReminderEnabled = configRead('enableSigninReminder');
 
   if (r.adPlacements && adBlockEnabled) {
     r.adPlacements = [];
   }
 
-  // Also set playerAds to false, just incase.
   if (r.playerAds && adBlockEnabled) {
     r.playerAds = false;
   }
 
-  // Also set adSlots to an empty array, emptying only the adPlacements won't work.
   if (r.adSlots && adBlockEnabled) {
     r.adSlots = [];
   }
@@ -37,7 +37,8 @@ JSON.parse = function () {
     r.paidContentOverlay = null;
   }
 
-  if (r?.streamingData?.adaptiveFormats && configRead('videoPreferredCodec') !== 'any') {
+  // ── Codec filtering ───────────────────────────────────────────────────────
+  if (r && r.streamingData && r.streamingData.adaptiveFormats && configRead('videoPreferredCodec') !== 'any') {
     const preferredCodec = configRead('videoPreferredCodec');
     const hasPreferredCodec = r.streamingData.adaptiveFormats.find(format => format.mimeType.includes(preferredCodec));
     if (hasPreferredCodec) {
@@ -48,16 +49,21 @@ JSON.parse = function () {
     }
   }
 
-  // Drop "masthead" ad from home screen
-  if (
-    r?.contents?.tvBrowseRenderer?.content?.tvSurfaceContentRenderer?.content
-      ?.sectionListRenderer?.contents
-  ) {
+  // ── Browse page processing (home/subscriptions/etc.) ─────────────────────
+  const signinReminderEnabled = configRead('enableSigninReminder');
+  const browseContents = r && r.contents && r.contents.tvBrowseRenderer &&
+    r.contents.tvBrowseRenderer.content &&
+    r.contents.tvBrowseRenderer.content.tvSurfaceContentRenderer &&
+    r.contents.tvBrowseRenderer.content.tvSurfaceContentRenderer.content &&
+    r.contents.tvBrowseRenderer.content.tvSurfaceContentRenderer.content.sectionListRenderer &&
+    r.contents.tvBrowseRenderer.content.tvSurfaceContentRenderer.content.sectionListRenderer.contents;
+
+  if (browseContents) {
+    const sectionListContents = r.contents.tvBrowseRenderer.content.tvSurfaceContentRenderer.content.sectionListRenderer.contents;
+
     if (!signinReminderEnabled) {
       r.contents.tvBrowseRenderer.content.tvSurfaceContentRenderer.content.sectionListRenderer.contents =
-        r.contents.tvBrowseRenderer.content.tvSurfaceContentRenderer.content.sectionListRenderer.contents.filter(
-          (elm) => !elm.feedNudgeRenderer
-        );
+        sectionListContents.filter((elm) => !elm.feedNudgeRenderer);
     }
 
     if (adBlockEnabled) {
@@ -84,42 +90,38 @@ JSON.parse = function () {
   }
 
   if (r.messages && Array.isArray(r.messages) && !configRead('enableYouThereRenderer')) {
-    r.messages = r.messages.filter(
-      (msg) => !msg?.youThereRenderer
-    );
+    r.messages = r.messages.filter((msg) => !(msg && msg.youThereRenderer));
   }
 
   // Remove shorts ads
-  if (!Array.isArray(r) && r?.entries && adBlockEnabled) {
-    r.entries = r.entries?.filter(
-      (elm) => !elm?.command?.reelWatchEndpoint?.adClientParams?.isAd
+  if (!Array.isArray(r) && r && r.entries && adBlockEnabled) {
+    r.entries = r.entries.filter(
+      (elm) => !(elm && elm.command && elm.command.reelWatchEndpoint && elm.command.reelWatchEndpoint.adClientParams && elm.command.reelWatchEndpoint.adClientParams.isAd)
     );
   }
 
-  // Patch settings
-
-  if (r?.title?.runs) {
+  // ── Settings page injection ───────────────────────────────────────────────
+  if (r && r.title && r.title.runs) {
     PatchSettings(r);
   }
 
-  // DeArrow Implementation. I think this is the best way to do it. (DOM manipulation would be a pain)
-
-  if (r?.contents?.sectionListRenderer?.contents) {
+  // ── Shelf/tile processing (DeArrow, HQ thumbnails, long press, previews) ─
+  if (r && r.contents && r.contents.sectionListRenderer && r.contents.sectionListRenderer.contents) {
     processShelves(r.contents.sectionListRenderer.contents);
   }
 
-  if (r?.continuationContents?.sectionListContinuation?.contents) {
+  if (r && r.continuationContents && r.continuationContents.sectionListContinuation && r.continuationContents.sectionListContinuation.contents) {
     processShelves(r.continuationContents.sectionListContinuation.contents);
   }
 
-  if (r?.continuationContents?.horizontalListContinuation?.items) {
+  if (r && r.continuationContents && r.continuationContents.horizontalListContinuation && r.continuationContents.horizontalListContinuation.items) {
     deArrowify(r.continuationContents.horizontalListContinuation.items);
     hqify(r.continuationContents.horizontalListContinuation.items);
     addLongPress(r.continuationContents.horizontalListContinuation.items);
     r.continuationContents.horizontalListContinuation.items = hideVideo(r.continuationContents.horizontalListContinuation.items);
   }
 
-  if (r?.contents?.tvBrowseRenderer?.content?.tvSecondaryNavRenderer?.sections) {
+  if (r && r.contents && r.contents.tvBrowseRenderer && r.contents.tvBrowseRenderer.content && r.contents.tvBrowseRenderer.content.tvSecondaryNavRenderer && r.contents.tvBrowseRenderer.content.tvSecondaryNavRenderer.sections) {
     for (const section of r.contents.tvBrowseRenderer.content.tvSecondaryNavRenderer.sections) {
       for (const tab of section.tvSecondaryNavSectionRenderer.tabs) {
         processShelves(tab.tabRenderer.content.tvSurfaceContentRenderer.content.sectionListRenderer.contents);
@@ -127,7 +129,8 @@ JSON.parse = function () {
     }
   }
 
-  if (r?.contents?.singleColumnWatchNextResults?.pivot?.sectionListRenderer) {
+  // ── Watch-next page processing (queue, sign-in reminder) ─────────────────
+  if (r && r.contents && r.contents.singleColumnWatchNextResults && r.contents.singleColumnWatchNextResults.pivot && r.contents.singleColumnWatchNextResults.pivot.sectionListRenderer) {
     if (!signinReminderEnabled) {
       r.contents.singleColumnWatchNextResults.pivot.sectionListRenderer.contents =
         r.contents.singleColumnWatchNextResults.pivot.sectionListRenderer.contents.filter(
@@ -135,7 +138,7 @@ JSON.parse = function () {
         );
     }
     processShelves(r.contents.singleColumnWatchNextResults.pivot.sectionListRenderer.contents, false);
-    if (window.queuedVideos.videos.length > 0) {
+    if (window.queuedVideos && window.queuedVideos.videos.length > 0) {
       const queuedVideosClone = window.queuedVideos.videos.slice();
       queuedVideosClone.unshift(TileRenderer(
         'Clear Queue',
@@ -144,44 +147,23 @@ JSON.parse = function () {
             action: 'CLEAR_QUEUE'
           }
         }));
+      const lastVideoIdx = queuedVideosClone.findIndex(v => v.tileRenderer && v.tileRenderer.contentId === window.queuedVideos.lastVideoId);
       r.contents.singleColumnWatchNextResults.pivot.sectionListRenderer.contents.unshift(ShelfRenderer(
         'Queued Videos',
         queuedVideosClone,
-        queuedVideosClone.findIndex(v => v.contentId === window.queuedVideos.lastVideoId) !== -1 ?
-          queuedVideosClone.findIndex(v => v.contentId === window.queuedVideos.lastVideoId)
-          : 0
+        lastVideoIdx !== -1 ? lastVideoIdx : 0
       ));
     }
   }
-  /*
- 
-  Chapters are disabled due to the API removing description data which was used to generate chapters
- 
-  if (r?.contents?.singleColumnWatchNextResults?.results?.results?.contents && configRead('enableChapters')) {
-    const chapterData = Chapters(r);
-    r.frameworkUpdates.entityBatchUpdate.mutations.push(chapterData);
-    resolveCommand({
-      "clickTrackingParams": "null",
-      "loadMarkersCommand": {
-        "visibleOnLoadKeys": [
-          chapterData.entityKey
-        ],
-        "entityKeys": [
-          chapterData.entityKey
-        ]
-      }
-    });
-  }*/
 
-  // Manual SponsorBlock Skips
-
-  if (configRead('sponsorBlockManualSkips').length > 0 && r?.playerOverlays?.playerOverlayRenderer) {
-    const manualSkippedSegments = configRead('sponsorBlockManualSkips');
-    let timelyActions = [];
-    if (window?.sponsorblock?.segments) {
+  // ── SponsorBlock: manual skip buttons in player overlay ───────────────────
+  const manualSkips = configRead('sponsorBlockManualSkips');
+  if (manualSkips.length > 0 && r && r.playerOverlays && r.playerOverlays.playerOverlayRenderer) {
+    const timelyActions = [];
+    if (window.sponsorblock && window.sponsorblock.segments) {
       for (const segment of window.sponsorblock.segments) {
-        if (manualSkippedSegments.includes(segment.category)) {
-          const timelyActionData = timelyAction(
+        if (manualSkips.includes(segment.category)) {
+          timelyActions.push(timelyAction(
             `Skip ${segment.category}`,
             'SKIP_NEXT',
             {
@@ -197,18 +179,18 @@ JSON.parse = function () {
             },
             segment.segment[0] * 1000,
             segment.segment[1] * 1000 - segment.segment[0] * 1000
-          );
-          timelyActions.push(timelyActionData);
+          ));
         }
       }
       r.playerOverlays.playerOverlayRenderer.timelyActionRenderers = timelyActions;
     }
-  } else if (r?.playerOverlays?.playerOverlayRenderer) {
+  } else if (r && r.playerOverlays && r.playerOverlays.playerOverlayRenderer) {
     r.playerOverlays.playerOverlayRenderer.timelyActionRenderers = [];
   }
 
-  if (r?.transportControls?.transportControlsRenderer?.promotedActions && configRead('enableSponsorBlockHighlight')) {
-    if (window?.sponsorblock?.segments) {
+  // ── SponsorBlock: highlight button in transport controls ──────────────────
+  if (r && r.transportControls && r.transportControls.transportControlsRenderer && r.transportControls.transportControlsRenderer.promotedActions && configRead('enableSponsorBlockHighlight')) {
+    if (window.sponsorblock && window.sponsorblock.segments) {
       const category = window.sponsorblock.segments.find(seg => seg.category === 'poi_highlight');
       if (category) {
         r.transportControls.transportControlsRenderer.promotedActions.push({
