@@ -24,6 +24,16 @@ export function findFunction(funcName) {
     }
 }
 
+// Extract a customAction payload from any of the recognised command shapes.
+function extractCustomAction(cmd) {
+    return cmd && (
+        cmd.customAction ||
+        (cmd.signalAction && cmd.signalAction.customAction) ||
+        (cmd.showEngagementPanelEndpoint && cmd.showEngagementPanelEndpoint.customAction) ||
+        (cmd.playlistEditEndpoint && cmd.playlistEditEndpoint.customAction)
+    );
+}
+
 // Patch resolveCommand to be able to change TizenTube settings
 
 export function patchResolveCommand() {
@@ -62,65 +72,52 @@ export function patchResolveCommand() {
                             return true;
                         }
                     }
-                } else if (cmd.customAction) {
-                    customAction(cmd.customAction.action, cmd.customAction.parameters);
-                    return true;
-                } else if (cmd?.signalAction?.customAction) {
-                    customAction(cmd.signalAction.customAction.action, cmd.signalAction.customAction.parameters);
-                    return true;
-                } else if (cmd?.showEngagementPanelEndpoint?.customAction) {
-                    customAction(cmd.showEngagementPanelEndpoint.customAction.action, cmd.showEngagementPanelEndpoint.customAction.parameters);
-                    return true;
-                } else if (cmd?.playlistEditEndpoint?.customAction) {
-                    customAction(cmd.playlistEditEndpoint.customAction.action, cmd.playlistEditEndpoint.customAction.parameters);
-                    return true;
-                } else if (cmd?.openPopupAction?.uniqueId === 'playback-settings') {
-                    // Patch the playback settings popup to use TizenTube speed settings
-                    const items = cmd.openPopupAction.popup.overlaySectionRenderer.overlay.overlayTwoPanelRenderer.actionPanel.overlayPanelRenderer.content.overlayPanelItemListRenderer.items;
-                    for (const item of items) {
-                        if (item?.compactLinkRenderer?.icon?.iconType === 'SLOW_MOTION_VIDEO') {
-                            item.compactLinkRenderer.subtitle && (item.compactLinkRenderer.subtitle.simpleText = 'with TizenTube');
-                            item.compactLinkRenderer.serviceEndpoint = {
-                                clickTrackingParams: "null",
-                                signalAction: {
+                } else {
+                    const ca = extractCustomAction(cmd);
+                    if (ca) {
+                        customAction(ca.action, ca.parameters);
+                        return true;
+                    } else if (cmd && cmd.openPopupAction && cmd.openPopupAction.uniqueId === 'playback-settings') {
+                        // Patch the playback settings popup to use TizenTube speed settings
+                        const items = cmd.openPopupAction.popup.overlaySectionRenderer.overlay.overlayTwoPanelRenderer.actionPanel.overlayPanelRenderer.content.overlayPanelItemListRenderer.items;
+                        for (const item of items) {
+                            if (item && item.compactLinkRenderer && item.compactLinkRenderer.icon && item.compactLinkRenderer.icon.iconType === 'SLOW_MOTION_VIDEO') {
+                                item.compactLinkRenderer.subtitle && (item.compactLinkRenderer.subtitle.simpleText = 'with TizenTube');
+                                item.compactLinkRenderer.serviceEndpoint = {
+                                    clickTrackingParams: "null",
+                                    signalAction: {
+                                        customAction: {
+                                            action: 'TT_SPEED_SETTINGS_SHOW',
+                                            parameters: []
+                                        }
+                                    }
+                                };
+                            }
+                        }
+
+                        cmd.openPopupAction.popup.overlaySectionRenderer.overlay.overlayTwoPanelRenderer.actionPanel.overlayPanelRenderer.content.overlayPanelItemListRenderer.items.splice(2, 0,
+                            buttonItem(
+                                { title: 'Mini Player' },
+                                { icon: 'CLEAR_COOKIES' }, [
+                                {
                                     customAction: {
-                                        action: 'TT_SPEED_SETTINGS_SHOW',
-                                        parameters: []
+                                        action: 'ENTER_PIP'
                                     }
                                 }
-                            };
-                        }
+                            ])
+                        );
+                    } else if (cmd && cmd.watchEndpoint && cmd.watchEndpoint.videoId) {
+                        window.isPipPlaying = false;
+                        const ytlrPlayerContainer = document.querySelector('ytlr-player-container');
+                        ytlrPlayerContainer.style.removeProperty('z-index');
                     }
-
-                    cmd.openPopupAction.popup.overlaySectionRenderer.overlay.overlayTwoPanelRenderer.actionPanel.overlayPanelRenderer.content.overlayPanelItemListRenderer.items.splice(2, 0,
-                        buttonItem(
-                            { title: 'Mini Player' },
-                            { icon: 'CLEAR_COOKIES' }, [
-                            {
-                                customAction: {
-                                    action: 'ENTER_PIP'
-                                }
-                            }
-                        ])
-                    );
-                } else if (cmd?.watchEndpoint?.videoId) {
-                    window.isPipPlaying = false;
-                    const ytlrPlayerContainer = document.querySelector('ytlr-player-container');
-                    ytlrPlayerContainer.style.removeProperty('z-index');
                 }
-
-                if (cmd.customAction) return window._yttv[key].instance.resolveCommand(cmd, _);
 
                 if (cmd.commandExecutorCommand && cmd.commandExecutorCommand.commands) {
                     for (const command of cmd.commandExecutorCommand.commands) {
-                        if (command.customAction) {
-                            customAction(command.customAction.action, command.customAction.parameters);
-                        } else if (command.signalAction?.customAction) {
-                            customAction(command.signalAction.customAction.action, command.signalAction.customAction.parameters);
-                        } else if (command.showEngagementPanelEndpoint?.customAction) {
-                            customAction(command.showEngagementPanelEndpoint.customAction.action, command.showEngagementPanelEndpoint.customAction.parameters);
-                        } else if (command.playlistEditEndpoint?.customAction) {
-                            customAction(command.playlistEditEndpoint.customAction.action, command.playlistEditEndpoint.customAction.parameters);
+                        const ca = extractCustomAction(command);
+                        if (ca) {
+                            customAction(ca.action, ca.parameters);
                         } else {
                             window._yttv[key].instance.resolveCommand(command, _);
                         }
@@ -128,8 +125,9 @@ export function patchResolveCommand() {
                     return true;
                 }
 
-                if (cmd?.requestAccountSelectorCommand 
-                    && cmd.requestAccountSelectorCommand?.identityActionContext?.eventTrigger === 'ACCOUNT_EVENT_TRIGGER_ON_EXIT') {
+                if (cmd && cmd.requestAccountSelectorCommand &&
+                    cmd.requestAccountSelectorCommand.identityActionContext &&
+                    cmd.requestAccountSelectorCommand.identityActionContext.eventTrigger === 'ACCOUNT_EVENT_TRIGGER_ON_EXIT') {
                     if (!configRead('enableWhosWatchingMenuOnAppExit')) {
                         ogResolve.call(this, {
                             signalAction: {

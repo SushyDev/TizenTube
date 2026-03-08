@@ -1,9 +1,9 @@
+import resolveCommand from '../resolveCommand.js';
+
 window.queuedVideos = {
     videos: [],
     lastVideoId: null
 };
-
-import resolveCommand from '../resolveCommand.js';
 
 function addListener() {
     const videoPlayer = document.querySelector('.html5-video-player');
@@ -45,7 +45,7 @@ function addListener() {
             }
         } else if (playerStateObject.isPlaying) {
             document.getElementById('container').style.setProperty('opacity', '1', 'important');
-            if (window.queuedVideos.videos.find(v => v.contentId === videoData.video_id)) {
+            if (window.queuedVideos.videos.find(v => v.tileRenderer?.contentId === videoData.video_id)) {
                 window.queuedVideos.lastVideoId = videoData.video_id;
             }
         }

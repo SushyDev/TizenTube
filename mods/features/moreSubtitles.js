@@ -197,8 +197,6 @@ function createSectionTitle(title) {
 function patchSubtitleMenu() {
     if (isPatched) return;
 
-    // Always patch if possible - settings will be checked dynamically
-    if (!window._yttv) return setTimeout(patchSubtitleMenu, 250);
     const yttvInstance = Object.values(window._yttv).find(
         (obj) =>
             obj &&
@@ -206,17 +204,15 @@ function patchSubtitleMenu() {
             typeof obj.instance.resolveCommand === "function"
     );
 
-    if (
-        !yttvInstance ||
-        yttvInstance.instance.resolveCommand.isPatchedBySubtitleLocalization
-    ) {
-        if (!yttvInstance) {
-            console.error(
-                "TizenTube Subtitle Localization: Could not find resolveCommand instance."
-            );
-        } else {
-            console.log("TizenTube Subtitle Localization: Already patched.");
-        }
+    if (!yttvInstance) {
+        console.error(
+            "TizenTube Subtitle Localization: Could not find resolveCommand instance."
+        );
+        return;
+    }
+
+    if (yttvInstance.instance.resolveCommand.isPatchedBySubtitleLocalization) {
+        console.log("TizenTube Subtitle Localization: Already patched.");
         return;
     }
 
@@ -359,21 +355,10 @@ function patchSubtitleMenu() {
     isPatched = true;
 }
 
-// Wait for the YouTube TV app to be ready
+// Wait for the YouTube TV app to be ready before patching the subtitle menu.
 const interval = setInterval(() => {
     if (window._yttv && Object.keys(window._yttv).length > 0) {
         patchSubtitleMenu();
         clearInterval(interval);
     }
 }, 1000);
-
-// Also try to patch when DOM is loaded
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", patchSubtitleMenu);
-} else {
-    patchSubtitleMenu();
-}
-
-console.log(
-    "TizenTube Subtitle Localization: Module loaded, waiting for YouTube TV..."
-);
